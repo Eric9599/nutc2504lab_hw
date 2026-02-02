@@ -1,3 +1,11 @@
+---
+name: Bug report
+about: Create a report to help us improve
+title: ''
+labels: ''
+assignees: ''
+---
+
 ## 📝 類型 (Type)
 - [ ] Bug Fix (修復錯誤)
 - [ ] New Feature (新功能需求)
