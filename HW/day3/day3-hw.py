@@ -1,121 +1,162 @@
 import re
+import os
 from typing import TypedDict, List
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, END
+from langchain_core.tools import tool
 
+# 1. 初始化模型
 model = ChatOpenAI(
     base_url="https://ws-02.wade0426.me/v1",
     api_key="day3hw",
     model="Qwen/Qwen3-VL-8B-Instruct",
-    temperature=1.5
+    temperature=0.1
 )
 
 
-# --- 2. 定義資料結構 (State) ---
+# 2. 定義資料狀態 (State)
 class GraphState(TypedDict):
-    raw_segments: List[dict]  # 存放 SRT 解析後的字典列表
-    full_text: str  # 存放純文字內容
-    transcript_result: str  # 存放整理好的逐字稿 (注意：名稱要跟下面函式 return 的 key 一樣)
-    summary_result: str  # 存放 AI 摘要結果
+    raw_segments: List[dict]
+    full_text: str
+    transcript_result: str
+    summary_result: str
 
 
-# --- 3. 輔助函式 (解析 SRT) ---
+# 3. 定義工具 (@tool)
+@tool
+def summarize_tool(content: str) -> str:
+    """
+    會議摘要專用工具。
+    用途：輸入長篇逐字稿內容，輸出結構化的重點摘要。
+    """
+    print("[Tool] 摘要工具被呼叫，正在進行 AI 推論...")
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "你是一個專業的會議記錄員，擅長歸納重點。"),
+        ("human", "請將以下內容整理成 3-5 點關鍵摘要（請務必使用繁體中文回答）：\n\n{content}")
+    ])
+
+    chain = prompt | model | StrOutputParser()
+    return chain.invoke({"content": content})
+
+
+# 4. 輔助函式 (SRT 解析)
 def parse_srt_file(file_path):
-    """最精簡的 SRT 解析器，直接讀取並回傳 List"""
     segments = []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-    # 直接開檔讀取 (假設檔案一定存在且編碼正確)
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
+        pattern = re.compile(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s+(.*?)(?=\n\n|\Z)', re.DOTALL)
+        matches = pattern.findall(content)
 
-    # 使用 Regex 抓取：時間軸 --> 時間軸 內容
-    pattern = re.compile(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\s+(.*?)(?=\n\n|\Z)', re.DOTALL)
-    matches = pattern.findall(content)
-
-    for start, end, text in matches:
-        segments.append({
-            "start": start,
-            "end": end,
-            "text": text.replace('\n', ' ').strip()
-        })
-
+        for start, end, text in matches:
+            segments.append({
+                "start": start,
+                "end": end,
+                "text": text.replace('\n', ' ').strip()
+            })
+    except FileNotFoundError:
+        print(f"錯誤：找不到檔案 {file_path}")
     return segments
 
 
-# --- 4. 定義節點 (Nodes) ---
+# 5. 定義節點 (Nodes)
 
 def asr_node(state: GraphState):
-    print("ASR Node 讀取檔案中...")
+    """節點 A：讀取檔案"""
+    print("[ASR Node] 讀取檔案中...")
 
     srt_path = "out/133.srt"
     txt_path = "out/133.txt"
 
     segments = parse_srt_file(srt_path)
+    full_text = ""
 
-    with open(txt_path, "r", encoding="utf-8") as f:
-        full_text = f.read()
+    if os.path.exists(txt_path):
+        with open(txt_path, "r", encoding="utf-8") as f:
+            full_text = f.read()
+    else:
+        full_text = " ".join([seg['text'] for seg in segments])
 
-    # 回傳給 State
     return {"raw_segments": segments, "full_text": full_text}
 
 
 def transcript_node(state: GraphState):
-    print("Transcript Node")
+    """節點 B：整理逐字稿"""
+    print("[Transcript Node] 格式化逐字稿...")
 
-    segments = state["raw_segments"]
+    segments = state.get("raw_segments", [])
     output_str = ""
-
     for seg in segments:
         output_str += f"[{seg['start']} -> {seg['end']}] {seg['text']}\n"
 
-    # 回傳 Key 必須對應 State 定義的 transcript_result
     return {"transcript_result": output_str}
 
 
 def summary_node(state: GraphState):
-    print("Summary Node")
+    """節點 C：呼叫工具生成摘要"""
+    print("[Summary Node] 準備呼叫摘要工具...")
 
-    text = state["full_text"]
+    text = state.get("full_text", "")
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是一個專業的會議記錄員。"),
-        ("human", "請將以下內容整理成關鍵摘要：\n\n{content}")
-    ])
+    if not text:
+        tool_output = "無內容可摘要"
+    else:
+        tool_output = summarize_tool.invoke(text)
 
-    chain = prompt | model | StrOutputParser()
-    result = chain.invoke({"content": text})
-
-    return {"summary_result": result}
+    return {"summary_result": tool_output}
 
 
-# --- 5. 建立圖形 (Graph) ---
+def writer_node(state: GraphState):
+    """節點 D：Writer (匯合點 - 輸出到終端機)"""
+    print("[Writer Node] 整合完成，輸出結果如下：")
+    print("\n" + "=" * 50)  # 分隔線
+
+    # 取出資料
+    transcript = state.get("transcript_result", "")
+    summary = state.get("summary_result", "")
+
+    print("【重點摘要】")
+    print(summary)
+    print("\n" + "-" * 50 + "\n")
+    print("【詳細逐字稿時間軸】")
+    print(transcript)
+
+    print("=" * 50 + "\n")
+
+    return {}
+
+
+# 6. 建構 LangGraph 圖形
 
 workflow = StateGraph(GraphState)
 
-# 加入節點
+# 6.1 加入節點
 workflow.add_node("asr_agent", asr_node)
 workflow.add_node("transcript_writer", transcript_node)
 workflow.add_node("summarizer", summary_node)
+workflow.add_node("writer", writer_node)
 
-# 設定流程
+# 6.2 設定邊 (菱形結構)
 workflow.set_entry_point("asr_agent")
-workflow.add_edge("asr_agent", "transcript_writer")  # 分流 1
-workflow.add_edge("asr_agent", "summarizer")  # 分流 2
-workflow.add_edge("transcript_writer", END)
-workflow.add_edge("summarizer", END)
 
-# 編譯
+workflow.add_edge("asr_agent", "transcript_writer")
+workflow.add_edge("asr_agent", "summarizer")
+
+workflow.add_edge("transcript_writer", "writer")
+workflow.add_edge("summarizer", "writer")
+
+workflow.add_edge("writer", END)
+
+# 6.3 編譯
 app = workflow.compile()
+print(app.get_graph().draw_ascii())
 
-print("開始執行...\n")
+# 7. 執行
 
-final_state = app.invoke({})
-
-print("-" * 30)
-print("【逐字稿預覽】")
-print(final_state["transcript_result"][:2000])
-print("-" * 30)
-print("【重點摘要】")
-print(final_state["summary_result"])
+print("開始執行 LangGraph...\n")
+app.invoke({})
+print("執行結束！")
