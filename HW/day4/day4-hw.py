@@ -1,6 +1,7 @@
 import time
-from typing import TypedDict, List
-from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Annotated
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.graph import StateGraph, END, add_messages
 from langchain_openai import ChatOpenAI
 from search_searxng import search_searxng
 from vlm_read_website import vlm_read_website
@@ -16,7 +17,7 @@ llm = ChatOpenAI(
 class AgentState(TypedDict):
     input: str  # 使用者問題
     knowledge_base: str  # 已知資訊
-    messages: List[str]  # 過程紀錄
+    messages: Annotated[list[BaseMessage], add_messages]  # 過程紀錄
     search_results: List[dict]  # 搜尋結果暫存
     current_result_index: int  # 目前 VLM 讀到第幾篇
     vlm_temp_content: str  # VLM 剛讀完的內容
@@ -26,10 +27,9 @@ class AgentState(TypedDict):
     valuable_found: bool  # VLM 是否發現有價值資訊
 
 
-
 def node_check_cache(state: AgentState):
     print("\n🔹 [Node] 檢查快取")
-    # (此處可實作 Redis/VectorDB)
+        # (此處可實作 Redis/VectorDB)
     hit = False
     if hit:
         return {"final_answer": "Cached Answer"}
@@ -100,13 +100,31 @@ def node_gen_keywords(state: AgentState):
 
 
 def node_search_tool(state: AgentState):
-    # 呼叫 search_searxng.py
-    last_msg = state['messages'][-1]
-    query = last_msg.replace("Query: ", "")
+    print("\n* [Node] 執行 searXNG 搜尋...")
 
-    results = search_searxng(query, limit=3)
+    messages = state.get('messages', [])
+    if not messages:
+        print("* 錯誤：找不到訊息紀錄，無法搜尋。")
+        return {"search_results": [], "current_result_index": 0}
 
-    print(f"   => 取得 {len(results)} 筆結果")
+    last_msg = messages[-1]
+
+    if hasattr(last_msg, 'content'):
+        query_text = last_msg.content
+    else:
+        query_text = str(last_msg)
+
+    query = query_text.replace("Query: ", "").strip()
+
+    print(f"   => 提取到的關鍵字: {query}")
+
+    try:
+        results = search_searxng(query, limit=3)
+        print(f"   => 找到 {len(results)} 筆資料")
+    except Exception as e:
+        print(f"* 搜尋工具報錯: {e}")
+        results = []
+
     return {"search_results": results, "current_result_index": 0}
 
 
