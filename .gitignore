@@ -5,3 +5,6 @@
 .idea/
 HW/day3/Podcast_EP14.wav
 HW/day3/out
+HW/day4/__pycache__
+HW/day4/search_searxng.py
+HW/day4/vlm_read_website.py
