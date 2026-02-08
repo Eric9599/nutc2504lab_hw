@@ -5,7 +5,6 @@ import numpy as np
 from uuid import uuid4
 from dotenv import load_dotenv
 
-# LangChain 相關
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_text_splitters import CharacterTextSplitter, TokenTextSplitter
 from semantic_text_splitter import TextSplitter
@@ -42,7 +41,6 @@ except Exception as e:
 # --- 3. 資料讀取 (修改邏輯：保存檔名與內容的對應) ---
 print(f">>> 正在從 {DATA_PATH} 讀取資料...")
 
-# 我們不再合併成 all_text，而是存成一個列表，每項包含檔名與內容
 documents_data = []
 text_list = ["data_01.txt", "data_02.txt", "data_03.txt", "data_04.txt", "data_05.txt"]
 
@@ -53,7 +51,7 @@ for file_name in text_list:
             content = f.read()
             if content:
                 documents_data.append({
-                    "file_name": file_name,  # 記住這個檔名！
+                    "file_name": file_name,
                     "text": content
                 })
     except FileNotFoundError:
@@ -73,7 +71,7 @@ except Exception as e:
     exit()
 
 
-# --- 4. 定義切塊函式 (保持不變) ---
+# --- 4. 定義切塊函式  ---
 
 def fixed_size_splitter(text):
     text_splitter = CharacterTextSplitter(chunk_size=400, chunk_overlap=50, separator="\n", length_function=len)
@@ -90,7 +88,7 @@ def semantic_splitter(text):
     return splitter.chunks(text)
 
 
-# --- 5. 處理切塊與來源標記 (新增函式) ---
+# --- 5. 處理切塊與來源標記  ---
 
 def process_chunks_with_source(docs_data, splitter_func):
     """
